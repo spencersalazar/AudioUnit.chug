@@ -1,8 +1,27 @@
 
-CHUGINS=ABSaturator Bitcrusher KasFilter MagicSine
-CHUGS=$(foreach CHUG,$(CHUGINS),$(CHUG)/$(CHUG).chug)
+# chugin name
+CHUGIN_NAME=AudioUnit
 
-INSTALL_DIR=/usr/lib/chuck
+# all of the c/cpp files that compose this chugin
+C_MODULES=
+CXX_MODULES=PublicUtility/CAComponent.cpp \
+PublicUtility/CAComponentDescription.cpp \
+PublicUtility/CAStreamBasicDescription.cpp \
+PublicUtility/CABufferList.cpp
+OBJCXX_MODULES=AudioUnit.mm
+
+# where the chuck source code is
+CK_SRC_PATH?=chuck/include/
+
+
+# ---------------------------------------------------------------------------- #
+# you won't generally need to change anything below this line for a new chugin #
+# ---------------------------------------------------------------------------- #
+
+# default target: print usage message and quit
+current: 
+	@echo "[chuck build]: please use one of the following configurations:"
+	@echo "   make linux, make osx, or make win32"
 
 ifneq ($(CK_TARGET),)
 .DEFAULT_GOAL:=$(CK_TARGET)
@@ -11,43 +30,90 @@ MAKECMDGOALS:=$(.DEFAULT_GOAL)
 endif
 endif
 
-osx: $(CHUGS)
-linux: $(CHUGS)
-win32: $(CHUGS)
+.PHONY: osx linux linux-oss linux-jack linux-alsa win32
+osx linux linux-oss linux-jack linux-alsa win32: all
 
-$(CHUGS): 
-	make -C $(dir $@) $(MAKECMDGOALS)
+CC=gcc
+CXX=g++
+OBJCXX=g++
+LD=g++
 
-clean:
-	rm -rf $(addsuffix /*.o,$(CHUGINS)) $(CHUGS)
+CHUGIN_PATH=/usr/local/lib/chuck
 
-install: $(CHUGS)
-	mkdir -p $(INSTALL_DIR)
-	cp -rf $(CHUGS) $(INSTALL_DIR)
+ifneq (,$(strip $(filter osx bin-dist-osx,$(MAKECMDGOALS))))
+include makefile.osx
+endif
 
-DATE=$(shell date +"%Y-%m-%d")
-EXAMPLES=Bitcrusher/Bitcrusher-test.ck MagicSine/MagicSine-test.ck \
-ABSaturator/ABSaturator-test.ck KasFilter/README-KasFilter.ck
+ifneq (,$(strip $(filter linux,$(MAKECMDGOALS))))
+include makefile.linux
+endif
 
-bin-dist-osx: 
-	make osx
-	mkdir -p chugins-mac-$(DATE)/chugins/
-	mkdir -p chugins-mac-$(DATE)/examples/
-	cp -f notes/README-mac.txt chugins-mac-$(DATE)/
-	cp -rf $(EXAMPLES) chugins-mac-$(DATE)/examples/
-	cp -rf $(CHUGS) chugins-mac-$(DATE)/chugins/
-	tar czf chugins-mac-$(DATE).tgz chugins-mac-$(DATE)
-	rm -rf chugins-mac-$(DATE)/
+ifneq (,$(strip $(filter linux-oss,$(MAKECMDGOALS))))
+include makefile.linux
+endif
 
-WIN_CHUGS=$(foreach CHUG,$(CHUGINS),$(CHUG)/Release/$(CHUG).chug)
-    
-bin-dist-win32: 
-	mkdir -p chugins-windows-$(DATE)/chugins/
-	mkdir -p chugins-windows-$(DATE)/examples/
-	cp -f notes/README-windows.txt chugins-windows-$(DATE)/
-	cp -rf $(EXAMPLES) chugins-windows-$(DATE)/examples/
-	cp -rf $(WIN_CHUGS) chugins-windows-$(DATE)/chugins/
-	rm -rf chugins-windows-$(DATE).zip
-	zip -q -9 -r -m chugins-windows-$(DATE).zip chugins-windows-$(DATE)
-	rm -rf chugins-windows-$(DATE)/
+ifneq (,$(strip $(filter linux-jack,$(MAKECMDGOALS))))
+include makefile.linux
+endif
+
+ifneq (,$(strip $(filter linux-alsa,$(MAKECMDGOALS))))
+include makefile.linux
+endif
+
+ifneq (,$(strip $(filter win32,$(MAKECMDGOALS))))
+include makefile.win32
+endif
+
+ifneq ($(CHUCK_DEBUG),)
+FLAGS+= -g
+else
+FLAGS+= -O3
+endif
+
+ifneq ($(CHUCK_STRICT),)
+FLAGS+= -Wall
+endif
+
+# default: build a dynamic chugin
+CK_CHUGIN_STATIC?=0
+
+ifeq ($(CK_CHUGIN_STATIC),0)
+SUFFIX=.chug
+else
+SUFFIX=.schug
+FLAGS+= -D__CK_DLL_STATIC__
+endif
+
+C_OBJECTS=$(addsuffix .o,$(basename $(C_MODULES)))
+CXX_OBJECTS=$(addsuffix .o,$(basename $(CXX_MODULES)))
+OBJCXX_OBJECTS=$(addsuffix .o,$(basename $(OBJCXX_MODULES)))
+
+CHUG=$(addsuffix $(SUFFIX),$(CHUGIN_NAME))
+
+all: $(CHUG)
+
+$(CHUG): $(C_OBJECTS) $(CXX_OBJECTS) $(OBJCXX_OBJECTS)
+ifeq ($(CK_CHUGIN_STATIC),0)
+	$(LD) $(LDFLAGS) -o $@ $^
+else
+	ar rv $@ $^
+	ranlib $@
+endif
+
+$(C_OBJECTS): %.o: %.c
+	$(CC) $(FLAGS) -c -o $@ $<
+
+$(CXX_OBJECTS): %.o: %.cpp $(CK_SRC_PATH)/chuck_dl.h
+	$(CXX) $(FLAGS) -c -o $@ $<
+
+$(OBJCXX_OBJECTS): %.o: %.mm $(CK_SRC_PATH)/chuck_dl.h
+	$(OBJCXX) $(FLAGS) -c -o $@ $<
+
+install: $(CHUG)
+	mkdir -p $(CHUGIN_PATH)
+	cp $^ $(CHUGIN_PATH)
+	chmod 755 $(CHUGIN_PATH)/$(CHUG)
+
+clean: 
+	rm -rf $(C_OBJECTS) $(OBJCXX_OBJECTS) $(CXX_OBJECTS) $(CHUG)
 
